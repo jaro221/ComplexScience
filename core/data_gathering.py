@@ -43,18 +43,9 @@ from matplotlib import cm
 from tqdm import tqdm
 import random
 
-class CustomEmbedder(BaseEmbedder):
-    def __init__(self, embedding_model):
-        super().__init__()
-        self.embedding_model = embedding_model
-        self.pool = self.embedding_model.start_multi_process_pool()
-
-    def embed(self, documents, verbose=False):
-        embeddings = self.embedding_model.encode_multi_process(documents,self.pool) 
-        return embeddings
-        
+     
 class Support():
-    import os
+
     def __init__(self,path):
         self.path=path
     
@@ -78,7 +69,7 @@ class Support():
         dictionary = pickle.load(pickle_off)
         return dictionary    
 
-class Processing_articles():
+class Data_gathering():
     """ 
     Need to implement algorithm from OpanAlex, where:
         1. Download articles with authors (OpenAlex_v2                          -> aritlces_pd, authors_pd)         :DONE, improve             ->Succes in: def make_DB_articles(self,email,searched_keywords,search_articles):, need to improve
@@ -428,10 +419,10 @@ class Processing_articles():
             
         try:
             tokenized_articles=pd.read_json(self.path+"pd_articles_keywords.json")
-            print("Loaded keywords from json saved file to tokenizing abstracts by -Processing_articles.tokenizing-")
+            print("Loaded keywords from json saved file to tokenizing abstracts by -Data_gathering.tokenizing-")
         except:
             tokenized_articles=pd.DataFrame(columns=["tokens_id","tokens_titles","tokens_abstracts","tokens_article","tokens_distance"])
-            print("Initialized empty datagrame for keywords to tokenizing abstracts by -Processing_articles.tokenizing-")
+            print("Initialized empty datagrame for keywords to tokenizing abstracts by -Data_gathering.tokenizing-")
             
 
         tokens_names=list(tokenized_articles.columns)
@@ -474,7 +465,7 @@ class Processing_articles():
         all_citations_processed     = proart.all_citations_processed=pd.read_json("D:/Projekty/2023_Brazilia/bardosova_project-main/saved/articles_pd_citations_wound.json")
         """
         self.export_name_xnetwork=export_name_xnetwork
-        print("Processing_articles----> def make_xnetwork()")
+        print("Data_gathering----> def make_xnetwork()")
         
         """ Initializing data """
         edges=pd.read_json(self.path+self.folder+edges_name+".json")
@@ -558,7 +549,7 @@ class Processing_articles():
             
         For reverse, change inputs for "x" and "y" variables and set boll functions as "True"
         """
-        print("\t  Processing_articles ----> def match_numpy()")
+        print("\t  Data_gathering ----> def match_numpy()")
         """
         y=papers_ids
         x=xport
@@ -590,7 +581,7 @@ class Processing_articles():
         """
         
         #pandas_keywords=pd.read_json("D:/Projekty/2023_Brazilia/bardosova_project-main/saved/articles_pd_keywords.json")
-        print("Processing_articles ----> def get_uni_values()")
+        print("Data_gathering ----> def get_uni_values()")
         
         whole_tokens_list=list(pandas_keywords["tokens_article"])
         """Proccesing the kyewords to numpy array"""
@@ -604,7 +595,7 @@ class Processing_articles():
 
         new_numpy_pd=pd.DataFrame(new_numpy)
         columns=new_numpy_pd.columns
-        print(f"\nProcessing_articles ----> def get_uni_values()  Initiliazed large numpy array     Time: {time.time() - start_time} sec.\n")
+        print(f"\nData_gathering ----> def get_uni_values()  Initiliazed large numpy array     Time: {time.time() - start_time} sec.\n")
         
         start_time=time.time()
         for idx,item in enumerate(columns):
@@ -613,10 +604,10 @@ class Processing_articles():
             else:
                 pd_new=pd.concat([pd_new, new_numpy_pd[item]])
             if idx%10==0 and len(whole_tokens_list)>200000:
-                print(f"Processing_articles ----> def get_uni_values()  Index: {idx}/{len(columns)} Time: {time.time() - start_time} sec.")
+                print(f"Data_gathering ----> def get_uni_values()  Index: {idx}/{len(columns)} Time: {time.time() - start_time} sec.")
                 start_time=time.time()
             elif idx==len(columns):
-                print(f"Processing_articles ----> def get_uni_values()  Successful finished! Time: {time.time() - start_time} sec.")
+                print(f"Data_gathering ----> def get_uni_values()  Successful finished! Time: {time.time() - start_time} sec.")
                 start_time=time.time()                
                 
         if len(pandas_keywords)==len(self.papers_ids):
@@ -643,7 +634,7 @@ class Processing_articles():
             nodes_idx=nodes[posi_articles]
             
             posi_keywords_idx=proart.match_numpy(nodes_idx, x, arr_exp, None)
-            print(f"Processing_articles ----> def extract_keywords(): {idx}/{len(self.communities_np_uni[0])}")
+            print(f"Data_gathering ----> def extract_keywords(): {idx}/{len(self.communities_np_uni[0])}")
             
             keywords_idx=self.all_keywords.loc[posi_keywords_idx]
             keywords_uni_idx=self.get_uni_values(keywords_idx)
@@ -652,7 +643,7 @@ class Processing_articles():
         return self.keywords_clusters
 
     def make_xnetwork_clustered(self,network):
-        print("Processing_articles ----> def make_xnetwork_clustered()")
+        print("Data_gathering ----> def make_xnetwork_clustered()")
         start_time_network=time.time()
         self.defaultNames = "ABCDEFGHIJKLMNOPQRSTUWVXYZ"
         
@@ -862,10 +853,10 @@ class Processing_articles():
         self.network_clusterd=network
         self.network_saved_name=self.path+self.folder+str(self.export_name_xnetwork)+"_clustered1A.xnet"
         xn.igraph2xnet(network,fileName=PJ(self.path+self.folder+str(self.export_name_xnetwork)+"_clustered1A.xnet"),ignoredNodeAtts=["Text"])
-        print(f"Processing_articles ----> def make_xnetwork_clustered() ----> DONE in time: {np.round(time.time()-start_time_network,3)} sec.")
+        print(f"Data_gathering ----> def make_xnetwork_clustered() ----> DONE in time: {np.round(time.time()-start_time_network,3)} sec.")
 
     def report_dict2xlsx(self, dictionary, name,border):
-        print("Processing_articles ----> def report_dict2xlsx()")
+        print("Data_gathering ----> def report_dict2xlsx()")
         if type(dictionary)==dict and type(name)==str:
             names_columns=[]
             for udx,item in enumerate(dictionary[list(dictionary.keys())[0]]):
@@ -887,7 +878,7 @@ class Processing_articles():
                    pd_cluster_reports1=pd_cluster_reports.sort_values(by=[names_columns[9]],ascending=False)[:200]
 
                    pd_cluster_reports1.to_excel(writer, sheet_name="cluster_"+str(cluster_indx_str[idx]), index=False)
-            print("Processing_articles ----> def report_dict2xlsx() ------> DONE")
+            print("Data_gathering ----> def report_dict2xlsx() ------> DONE")
         else:
            print("Variable dictionary is not dict()!")
     
@@ -1079,7 +1070,7 @@ def match_numpy(y,x,arr_exp,bool_value):
         arr_exp=papers_ids
         bool_value=False
     """
-    print("\t  Processing_articles ----> def match_numpy()")
+    print("\t  Data_gathering ----> def match_numpy()")
     """
     y=papers_ids
     x=xport
