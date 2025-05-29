@@ -1,10 +1,13 @@
+# core/data_gathering.py
+
 import os
 import time
 import json
+import numpy as np
 import pandas as pd
 import requests
 
-from typing import List, Union
+from typing import List, Union, Tuple
 from tqdm import tqdm
 
 
@@ -54,7 +57,7 @@ class OpenAlexDataGatherer:
             json.dump(timestamps, f)
             f.truncate()
 
-    def time_str2date(self, publication_date: str) -> (int, str):
+    def time_str2date(self, publication_date: str) -> Tuple[int, str]:
         """Parse year and return (year, full_date) from 'YYYY-MM-DD'."""
         year = None
         if publication_date:
@@ -87,7 +90,6 @@ class OpenAlexDataGatherer:
 
         art_file = os.path.join(self.path, self.folder, "pd_articles.json")
         auth_file = os.path.join(self.path, self.folder, "pd_authors.json")
-        # load or init
         try:
             articles_pd = pd.read_json(art_file)
         except Exception:
@@ -159,7 +161,6 @@ class OpenAlexDataGatherer:
                             'Longitude': geo.get('longitude')
                         }
                         authors_pd = pd.concat([authors_pd, pd.DataFrame(auth_rec,index=[0])], ignore_index=True)
-                # save incremental
                 articles_pd.to_json(art_file, orient='records', force_ascii=False)
                 authors_pd.to_json(auth_file, orient='records', force_ascii=False)
         return articles_pd
@@ -176,7 +177,6 @@ class OpenAlexDataGatherer:
             resp = requests.get(self.BASE_URL, params=params); resp.raise_for_status()
             data = resp.json(); cursor = data.get('meta', {}).get('next_cursor')
             for work in data.get('results',[]): citing.append(work['id'].split('/')[-1])
-            # save per page
             with open(cite_file, 'w') as f: json.dump(citing, f, indent=2)
         return citing
 
@@ -214,6 +214,109 @@ class OpenAlexDataGatherer:
                 continue
             if len(citations_df) % save_every == 0:
                 citations_df.to_json(cit_path, orient='records', force_ascii=False)
-        # final save
         citations_df.to_json(cit_path, orient='records', force_ascii=False)
         return citations_df
+
+    def get_citing_insides_and_edges(self) -> Tuple[pd.DataFrame, np.ndarray]:
+        """
+        Process stored citations to filter only internal citations and construct edges.
+        Returns a DataFrame of internal citation counts and an edges array.
+        """
+        # Load previously fetched citations
+        cite_path = os.path.join(self.path, self.folder, "pd_articles_citations.json")
+        article_citing = pd.read_json(cite_path)
+
+        # Prepare output structures
+        processed_df = pd.DataFrame(columns=[
+            'Paper ID', 'Citing papers', 'Num citations', 'Year'
+        ])
+        all_ids = article_citing['Paper ID'].tolist()
+        id_set = set(all_ids)
+        edges = np.empty((0, 2), dtype=object)
+        start_time = time.time()
+
+        for idx, row in enumerate(article_citing.itertuples()):
+            pid = row._1  # Paper ID
+            year = row._4  # Year
+            citing_list = np.asarray(row._2)  # Citing papers list
+            internal = citing_list[np.isin(citing_list, all_ids)]
+
+            processed_df = processed_df.append({
+                'Paper ID': pid,
+                'Citing papers': internal,
+                'Num citations': len(internal),
+                'Year': np.float32(year)
+            }, ignore_index=True)
+
+            # Build edge list
+            if len(internal) > 0:
+                src = np.full(len(internal), pid, dtype=object)
+                edges = np.vstack((edges, np.vstack((src, internal)).T))
+
+            # Periodic save
+            if idx % 100 == 0:
+                elapsed = time.time() - start_time
+                print(f"Index: {idx}/{len(all_ids)} time: {elapsed:.2f}s")
+                processed_df.to_json(
+                    os.path.join(self.path, self.folder, "articles_pd_citations_processed.json"),
+                    orient='records', force_ascii=False
+                )
+                pd.DataFrame(edges).to_json(
+                    os.path.join(self.path, self.folder, "edges.json"),
+                    orient='records', force_ascii=False
+                )
+                start_time = time.time()
+
+        # Final save
+        processed_df.to_json(
+            os.path.join(self.path, self.folder, "articles_pd_citations_processed.json"),
+            orient='records', force_ascii=False
+        )
+        pd.DataFrame(edges).to_json(
+            os.path.join(self.path, self.folder, "edges.json"),
+            orient='records', force_ascii=False
+        )
+        return processed_df, edges
+
+    def get_articles_references(
+        self,
+        articles_df: pd.DataFrame,
+        save_every: int = 100,
+        references_file: str = 'pd_articles_references.json'
+    ) -> pd.DataFrame:
+        """
+        For each article in articles_df, fetch referenced works (papers this article cites) and record counts and years.
+        Skips already-processed articles and saves periodically.
+        """
+        ref_path = os.path.join(self.path, self.folder, references_file)
+        try:
+            references_df = pd.read_json(ref_path)
+            print(f"Loaded references from {ref_path}")
+        except Exception:
+            references_df = pd.DataFrame(columns=['Paper ID','References','Num references','Year'])
+            print("Initialized empty references DataFrame")
+        existing = set(references_df['Paper ID'].tolist())
+        for idx, row in tqdm(articles_df.iterrows(), total=len(articles_df), desc='References'):
+            pid = row['Paper ID']
+            if pid in existing:
+                continue
+            # Fetch single work details
+            self._enforce_rate_limit()
+            url = f"{self.BASE_URL}/{pid}"
+            resp = requests.get(url, params={'mailto': self.email})
+            resp.raise_for_status()
+            work = resp.json()
+            refs = [r.split('/')[-1] for r in work.get('referenced_works', [])]
+            references_df = references_df.append({
+                'Paper ID': pid,
+                'References': refs,
+                'Num references': len(refs),
+                'Year': row.get('Year')
+            }, ignore_index=True)
+            existing.add(pid)
+            if len(references_df) % save_every == 0:
+                references_df.to_json(ref_path, orient='records', force_ascii=False)
+        # Final save
+        references_df.to_json(ref_path, orient='records', force_ascii=False)
+        return references_df
+
