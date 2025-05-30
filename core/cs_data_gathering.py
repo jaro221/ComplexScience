@@ -145,22 +145,23 @@ class OpenAlexDataGatherer:
                     }
                     articles_pd = pd.concat([articles_pd, pd.DataFrame(rec,index=[0])], ignore_index=True)
                     for auth in paper.get('authorships', []):
-                        inst = auth.get('institutions',[{}])[0]
-                        geo = inst.get('geo', {})
-                        auth_rec = {
-                            'Paper ID': pid,
-                            'Title': remove_non_ascii(paper.get('title','')),
-                            'Author': auth.get('author',{}).get('display_name'),
-                            'Author ID': auth.get('author',{}).get('id','').split('/')[-1],
-                            'Author ORCID': auth.get('author',{}).get('orcid'),
-                            'Institution': inst.get('display_name'),
-                            'Institution ID': inst.get('id','').split('/')[-1],
-                            'Country': inst.get('country_code'),
-                            'Authors place': auth.get('author_position'),
-                            'Latitude': geo.get('latitude'),
-                            'Longitude': geo.get('longitude')
-                        }
-                        authors_pd = pd.concat([authors_pd, pd.DataFrame(auth_rec,index=[0])], ignore_index=True)
+                        if len(auth)>0:
+                            inst = auth.get('institutions',[{}])
+                            geo = inst.get('geo', {})
+                            auth_rec = {
+                                'Paper ID': pid,
+                                'Title': remove_non_ascii(paper.get('title','')),
+                                'Author': auth.get('author',{}).get('display_name'),
+                                'Author ID': auth.get('author',{}).get('id','').split('/')[-1],
+                                'Author ORCID': auth.get('author',{}).get('orcid'),
+                                'Institution': inst.get('display_name'),
+                                'Institution ID': inst.get('id','').split('/')[-1],
+                                'Country': inst.get('country_code'),
+                                'Authors place': auth.get('author_position'),
+                                'Latitude': geo.get('latitude'),
+                                'Longitude': geo.get('longitude')
+                            }
+                            authors_pd = pd.concat([authors_pd, pd.DataFrame(auth_rec,index=[0])], ignore_index=True)
                 articles_pd.to_json(art_file, orient='records', force_ascii=False)
                 authors_pd.to_json(auth_file, orient='records', force_ascii=False)
                 # Final save after all terms processed
