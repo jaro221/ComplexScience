@@ -370,7 +370,8 @@ class OpenAlexDataGatherer:
                         country_codes = [inst.get('country_code') for inst in last_known_institution if isinstance(inst, dict)] #for this case is used for the future maintaining code, this store country codes in way of list, now it is complicating store list to the dictionary
                         country_codes_str = ', '.join([str(code) for code in country_codes if code is not None])
                     else:
-                        country_codes = None    
+                        country_codes = None
+                        country_codes_str = ''   
                                         
                     record = {
                         'Author ID': auth.get('id', '').split('/')[-1],
@@ -384,14 +385,14 @@ class OpenAlexDataGatherer:
                     authors.append(record)
                 except Exception as e:
                     print(f"Error with get authors records for: {name} in {e}")
-                    if self.service_mode==True:
+                    if self.service_mode is True:
                         return auth,data_all
                     else:
                         return auth
 
 
         df_authors = pd.DataFrame(authors)
-        if self.service_mode==True:
+        if self.service_mode is True:
             return df_authors,data_all
         else:
             return df_authors
