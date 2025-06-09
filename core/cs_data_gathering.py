@@ -9,7 +9,9 @@ import requests
 
 from typing import List, Union, Tuple
 from tqdm import tqdm
+from requests import Request, Session
 
+session = Session()
 
 def remove_non_ascii(text: str) -> str:
     """Utility to remove non-ASCII characters from text."""
@@ -17,7 +19,7 @@ def remove_non_ascii(text: str) -> str:
 
 
 class OpenAlexDataGatherer:
-    """Gather data from OpenAlex and persist articles, authors, citations, and references via HTTP with rate-limit enforcement."""
+    """Gather data from OpenAlex and persist articles, authors, and citations via HTTP with rate-limit enforcement."""
 
     BASE_URL = "https://api.openalex.org/works"
     RATE_LIMIT = 99999          # max requests per window
@@ -30,6 +32,7 @@ class OpenAlexDataGatherer:
         self.path = path
         self.folder = folder
         self.email = email
+        self.service_mode=False
         os.makedirs(os.path.join(self.path, self.folder), exist_ok=True)
         # prepare request log file
         self._log_file = os.path.join(self.path, self.folder, ".request_log.json")
@@ -116,7 +119,8 @@ class OpenAlexDataGatherer:
                     'cursor': cursor,
                     'mailto': self.email
                 }
-                resp = requests.get(self.BASE_URL, params=params)
+                headers = { 'User-Agent': 'MyOpenAlexClient/0.1 (mailto:jaromir.klarak@savba.sk)'}
+                resp = requests.get(self.BASE_URL, params=params,headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
                 cursor = data.get('meta', {}).get('next_cursor')
@@ -145,8 +149,8 @@ class OpenAlexDataGatherer:
                     }
                     articles_pd = pd.concat([articles_pd, pd.DataFrame(rec,index=[0])], ignore_index=True)
                     for auth in paper.get('authorships', []):
-                        if len(auth)>0:
-                            inst = auth.get('institutions',[{}])
+                        try:
+                            inst = auth.get('institutions',[{}])[0]
                             geo = inst.get('geo', {})
                             auth_rec = {
                                 'Paper ID': pid,
@@ -162,11 +166,10 @@ class OpenAlexDataGatherer:
                                 'Longitude': geo.get('longitude')
                             }
                             authors_pd = pd.concat([authors_pd, pd.DataFrame(auth_rec,index=[0])], ignore_index=True)
+                        except:
+                            return auth
                 articles_pd.to_json(art_file, orient='records', force_ascii=False)
                 authors_pd.to_json(auth_file, orient='records', force_ascii=False)
-                # Final save after all terms processed
-        articles_pd.to_json(art_file, orient='records', force_ascii=False)
-        authors_pd.to_json(auth_file, orient='records', force_ascii=False)
         return articles_pd
 
     def get_citing_papers(self, paper_id: str) -> List[str]:
@@ -194,16 +197,93 @@ class OpenAlexDataGatherer:
         For each article in articles_df, fetch citing papers and record counts and years.
         Skips already-processed articles and saves periodically.
         """
-        # Implementation as before
-        ...
+        cit_path = os.path.join(self.path, self.folder, citations_file)
+        try:
+            citations_df = pd.read_json(cit_path)
+            print(f"Loaded citations from {cit_path}")
+        except Exception:
+            citations_df = pd.DataFrame(columns=['Paper ID','Citing papers','Num citations','Year'])
+            print(f"Initialized empty citations DataFrame")
+        existing = set(citations_df['Paper ID'].tolist())
+        for idx, row in tqdm(articles_df.iterrows(), total=len(articles_df), desc='Citations'):
+            pid = row['Paper ID']
+            if pid in existing: continue
+            try:
+                cites = self.get_citing_papers(pid)
+                citations_df = citations_df.append({
+                    'Paper ID': pid,
+                    'Citing papers': cites,
+                    'Num citations': len(cites),
+                    'Year': row.get('Year')
+                }, ignore_index=True)
+                existing.add(pid)
+            except Exception:
+                continue
+            if len(citations_df) % save_every == 0:
+                citations_df.to_json(cit_path, orient='records', force_ascii=False)
+        citations_df.to_json(cit_path, orient='records', force_ascii=False)
+        return citations_df
 
     def get_citing_insides_and_edges(self) -> Tuple[pd.DataFrame, np.ndarray]:
         """
         Process stored citations to filter only internal citations and construct edges.
         Returns a DataFrame of internal citation counts and an edges array.
         """
-        # Implementation as before
-        ...
+        # Load previously fetched citations
+        cite_path = os.path.join(self.path, self.folder, "pd_articles_citations.json")
+        article_citing = pd.read_json(cite_path)
+
+        # Prepare output structures
+        processed_df = pd.DataFrame(columns=[
+            'Paper ID', 'Citing papers', 'Num citations', 'Year'
+        ])
+        all_ids = article_citing['Paper ID'].tolist()
+        id_set = set(all_ids)
+        edges = np.empty((0, 2), dtype=object)
+        start_time = time.time()
+
+        for idx, row in enumerate(article_citing.itertuples()):
+            pid = row._1  # Paper ID
+            year = row._4  # Year
+            citing_list = np.asarray(row._2)  # Citing papers list
+            internal = citing_list[np.isin(citing_list, all_ids)]
+
+            processed_df = processed_df.append({
+                'Paper ID': pid,
+                'Citing papers': internal,
+                'Num citations': len(internal),
+                'Year': np.float32(year)
+            }, ignore_index=True)
+
+            # Build edge list
+            if len(internal) > 0:
+                src = np.full(len(internal), pid, dtype=object)
+                edges = np.vstack((edges, np.vstack((src, internal)).T))
+
+            # Periodic save
+            if idx % 100 == 0:
+                elapsed = time.time() - start_time
+                print(f"Index: {idx}/{len(all_ids)} time: {elapsed:.2f}s")
+                processed_df.to_json(
+                    os.path.join(self.path, self.folder, "articles_pd_citations_processed.json"),
+                    orient='records', force_ascii=False
+                )
+                pd.DataFrame(edges).to_json(
+                    os.path.join(self.path, self.folder, "edges.json"),
+                    orient='records', force_ascii=False
+                )
+                start_time = time.time()
+
+        # Final save
+        processed_df.to_json(
+            os.path.join(self.path, self.folder, "articles_pd_citations_processed.json"),
+            orient='records', force_ascii=False
+        )
+        pd.DataFrame(edges).to_json(
+            os.path.join(self.path, self.folder, "edges.json"),
+            orient='records', force_ascii=False
+        )
+        return processed_df, edges
 
     def get_articles_references(
         self,
@@ -246,3 +326,92 @@ class OpenAlexDataGatherer:
         # Final save
         references_df.to_json(ref_path, orient='records', force_ascii=False)
         return references_df
+
+    def get_authors_by_name(self, name: str, max_results: int = 100) -> pd.DataFrame:
+        """
+        Query OpenAlex for authors whose display name contains the given substring.
+
+        Parameters:
+        - name: substring to search for in author display names
+        - max_results: maximum number of author records to retrieve
+
+        Returns:
+        - DataFrame of matching author records
+        """
+        author_url = "https://api.openalex.org/authors"
+        authors = []
+        retrieved = 0
+        cursor = '*'
+        data_all=list()
+        while retrieved < max_results and cursor:
+            self._enforce_rate_limit()
+            params = {
+                'filter': f'display_name.search:{name}',
+                'per-page': min(200, max_results - retrieved),
+                'cursor': cursor,
+                'mailto': self.email
+            }
+            resp = requests.get(author_url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            cursor = data.get('meta', {}).get('next_cursor')
+            data_all.append(data)
+            for auth in data.get('results', []):
+                if retrieved >= max_results:
+                    break
+                retrieved += 1
+                try:
+                    last_known_institution = auth.get('last_known_institutions', {})
+
+                    # If 'last_known_institution' is empty or None, handle gracefully
+                    affiliations = [inst.get('display_name') for inst in last_known_institution] if isinstance(last_known_institution, list) else []
+                    if isinstance(last_known_institution, list):
+                        # Extract country_code from each dictionary in the list
+                        country_codes = [inst.get('country_code') for inst in last_known_institution if isinstance(inst, dict)] #for this case is used for the future maintaining code, this store country codes in way of list, now it is complicating store list to the dictionary
+                        country_codes_str = ', '.join([str(code) for code in country_codes if code is not None])
+                    else:
+                        country_codes = None    
+                                        
+                    record = {
+                        'Author ID': auth.get('id', '').split('/')[-1],
+                        'Display Name': auth.get('display_name'),
+                        'ORCID': auth.get('orcid'),
+                        'Works Count': auth.get('works_count'),
+                        'Citation Count': auth.get('cited_by_count'),
+                        'Affiliations': affiliations,
+                        'Country': country_codes_str
+                    }
+                    authors.append(record)
+                except Exception as e:
+                    print(f"Error with get authors records for: {name} in {e}")
+                    if self.service_mode==True:
+                        return auth,data_all
+                    else:
+                        return auth
+
+
+        df_authors = pd.DataFrame(authors)
+        if self.service_mode==True:
+            return df_authors,data_all
+        else:
+            return df_authors
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
