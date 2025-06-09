@@ -370,8 +370,7 @@ class OpenAlexDataGatherer:
                         country_codes = [inst.get('country_code') for inst in last_known_institution if isinstance(inst, dict)] #for this case is used for the future maintaining code, this store country codes in way of list, now it is complicating store list to the dictionary
                         country_codes_str = ', '.join([str(code) for code in country_codes if code is not None])
                     else:
-                        country_codes = None
-                        country_codes_str = ''   
+                        country_codes = None    
                                         
                     record = {
                         'Author ID': auth.get('id', '').split('/')[-1],
@@ -385,20 +384,59 @@ class OpenAlexDataGatherer:
                     authors.append(record)
                 except Exception as e:
                     print(f"Error with get authors records for: {name} in {e}")
-                    if self.service_mode is True:
+                    if self.service_mode==True:
                         return auth,data_all
                     else:
                         return auth
 
 
         df_authors = pd.DataFrame(authors)
-        if self.service_mode is True:
+        if self.service_mode==True:
             return df_authors,data_all
         else:
             return df_authors
 
 
+    def get_papers_by_author_id(self, author_id: str,max_results: int = 200) -> pd.DataFrame:
+        """
+        Fetch all works (papers) associated with a given OpenAlex author ID.
 
+        Parameters:
+        - author_id: OpenAlex author ID (without URL prefix)
+        - max_results: maximum number of works to retrieve
+
+        Returns:
+        - DataFrame of works by the author
+        """
+        works = []
+        retrieved = 0
+        cursor = '*'
+        while retrieved < max_results and cursor:
+            self._enforce_rate_limit()
+            params = {
+                'filter': f'author.id:{author_id}',
+                'per-page': min(200, max_results - retrieved),
+                'cursor': cursor,
+                'mailto': self.email
+            }
+            resp = requests.get(self.BASE_URL, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            cursor = data.get('meta', {}).get('next_cursor')
+            for work in data.get('results', []):
+                if retrieved >= max_results:
+                    break
+                retrieved += 1
+                works.append({
+                    'Work ID': work.get('id', '').split('/')[-1],
+                    'Title': remove_non_ascii(work.get('title', '')),
+                    'Publication Year': work.get('publication_year'),
+                    'DOI': work.get('ids', {}).get('doi'),
+                    'Cited By Count': work.get('cited_by_count'),
+                    'Type': work.get('type')
+                })
+        df_works = pd.DataFrame(works)
+        return df_works
 
 
 
